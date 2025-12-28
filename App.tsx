@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import GameEngine from './components/GameEngine';
 import HandTracker from './components/HandTracker';
 import SensitivitySlider from './components/SensitivitySlider';
@@ -12,11 +12,15 @@ const App: React.FC = () => {
     const [level, setLevel] = useState(1);
     const [isGameOver, setIsGameOver] = useState(false);
     const [isPaused, setIsPaused] = useState(true);
+    const [isAutoPaused, setIsAutoPaused] = useState(false);
+    const [hasStarted, setHasStarted] = useState(false);
     const [sensitivity, setSensitivity] = useState(0.35); 
     const [gameId, setGameId] = useState(0);
     const [briefing, setBriefing] = useState("Establishing Neural Link...");
     const [gameOverMsg, setGameOverMsg] = useState("");
     const [handState, setHandState] = useState<HandState>({ x: 0.5, isFist: false, isActive: false });
+
+    const handLostTimeoutRef = useRef<number | null>(null);
 
     const fetchBriefing = useCallback(async (lvl: number) => {
         const msg = await getMissionBriefing(lvl);
@@ -35,12 +39,48 @@ const App: React.FC = () => {
         setGameOverMsg(msg);
     }, [isGameOver]);
 
-    // Effect to monitor lives and trigger Game Over
     useEffect(() => {
-        if (lives <= 0 && !isGameOver && !isPaused) {
+        if (lives <= 0 && !isGameOver && !isPaused && hasStarted) {
             handleGameOver(score);
         }
-    }, [lives, isGameOver, isPaused, score, handleGameOver]);
+    }, [lives, isGameOver, isPaused, score, handleGameOver, hasStarted]);
+
+    // Keyboard controls
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                if (hasStarted && !isGameOver) {
+                    setIsPaused(prev => !prev);
+                }
+            } else if (e.key === 'ArrowUp') {
+                setSensitivity(s => Math.min(2.4, s + 0.1));
+            } else if (e.key === 'ArrowDown') {
+                setSensitivity(s => Math.max(0.05, s - 0.1));
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [hasStarted, isGameOver]);
+
+    // Auto-pause logic: Pause if hand is lost for > 1 sec
+    useEffect(() => {
+        if (handState.isActive) {
+            // Hand detected: cancel timeout and clear auto-pause
+            if (handLostTimeoutRef.current) {
+                clearTimeout(handLostTimeoutRef.current);
+                handLostTimeoutRef.current = null;
+            }
+            setIsAutoPaused(false);
+        } else {
+            // Hand lost: start timeout if not already running
+            if (!handLostTimeoutRef.current && hasStarted && !isGameOver) {
+                handLostTimeoutRef.current = window.setTimeout(() => {
+                    setIsAutoPaused(true);
+                    handLostTimeoutRef.current = null;
+                }, 1000);
+            }
+        }
+    }, [handState.isActive, hasStarted, isGameOver]);
 
     const startGame = () => {
         setGameId(p => p + 1);
@@ -49,7 +89,14 @@ const App: React.FC = () => {
         setLevel(1);
         setIsGameOver(false);
         setIsPaused(false);
+        setIsAutoPaused(false);
+        setHasStarted(true);
         setGameOverMsg("");
+    };
+
+    const togglePause = () => {
+        if (isGameOver) return;
+        setIsPaused(prev => !prev);
     };
 
     const onScoreChange = useCallback((s: number) => setScore(p => p + s), []);
@@ -61,30 +108,44 @@ const App: React.FC = () => {
         <div className="flex h-screen w-screen bg-[#020205] text-white overflow-hidden font-['Orbitron']">
             {/* LEFT: MAIN GAME STAGE */}
             <div className="relative flex-grow h-full bg-black/60 border-r border-white/10 overflow-hidden flex items-center justify-center">
-                <GameEngine 
-                    key={gameId}
-                    handState={handState} 
-                    sensitivity={sensitivity}
-                    isPaused={isPaused}
-                    onScoreChange={onScoreChange}
-                    onLevelUp={onLevelUp}
-                    onLifeLost={onLifeLost}
-                    onLifeGained={onLifeGained}
-                    onGameOver={handleGameOver}
-                />
+                <div className={`w-full h-full transition-all duration-500 flex items-center justify-center ${isAutoPaused && !isPaused ? 'grayscale brightness-50 contrast-125' : ''}`}>
+                    <GameEngine 
+                        key={gameId}
+                        handState={handState} 
+                        sensitivity={sensitivity}
+                        isPaused={isPaused || isAutoPaused}
+                        onScoreChange={onScoreChange}
+                        onLevelUp={onLevelUp}
+                        onLifeLost={onLifeLost}
+                        onLifeGained={onLifeGained}
+                        onGameOver={handleGameOver}
+                    />
+                </div>
+
+                {/* AUTO-PAUSE INDICATOR (Subtle) */}
+                {isAutoPaused && !isPaused && !isGameOver && (
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40">
+                        <div className="bg-red-500/20 border border-red-500 px-8 py-4 rounded-xl backdrop-blur-sm animate-pulse">
+                            <h4 className="text-red-500 font-bold tracking-[0.3em] uppercase text-xl">Signal Lost</h4>
+                            <p className="text-red-500/70 text-xs mt-1">RE-ESTABLISH HAND PROTOCOL</p>
+                        </div>
+                    </div>
+                )}
 
                 {/* GAME OVERLAYS */}
                 {(isPaused && !isGameOver) && (
                     <div className="absolute inset-0 z-50 bg-black/85 backdrop-blur-md flex flex-col items-center justify-center p-12 text-center">
-                        <h1 className="text-8xl font-black text-[#0ff] neon-text italic tracking-tighter mb-10 animate-pulse">NEON VADER</h1>
+                        <h1 className="text-8xl font-black text-[#0ff] neon-text italic tracking-tighter mb-10 animate-pulse">
+                            {hasStarted ? "SYSTEM PAUSED" : "NEON VADER"}
+                        </h1>
                         <div className="max-w-xl p-8 border border-[#0ff]/40 bg-[#0ff]/5 mb-12 text-xl font-light italic text-white/90 rounded-xl">
                             "{briefing}"
                         </div>
                         <button 
-                            onClick={startGame} 
+                            onClick={hasStarted ? togglePause : startGame} 
                             className="px-24 py-6 border-2 border-[#0ff] text-[#0ff] text-2xl font-bold hover:bg-[#0ff] hover:text-black transition-all uppercase tracking-[0.6em] shadow-[0_0_50px_rgba(0,255,255,0.4)] active:scale-95"
                         >
-                            Ignite Core
+                            {hasStarted ? "Re-Engage" : "Ignite Core"}
                         </button>
                     </div>
                 )}
@@ -109,9 +170,25 @@ const App: React.FC = () => {
                 <div className="absolute top-0 right-0 w-full h-full bg-gradient-to-b from-[#0ff]/5 via-transparent to-[#f0f]/5 pointer-events-none"></div>
                 
                 {/* HUD HEADER */}
-                <div className="flex flex-col gap-1 mb-10 relative">
-                    <span className="text-[#0ff] text-[10px] tracking-[0.5em] uppercase opacity-50">Link ID: NV-9900</span>
-                    <h3 className="text-4xl font-black italic tracking-tighter text-white neon-text">COMMAND GRID</h3>
+                <div className="flex items-start justify-between mb-10 relative">
+                    <div className="flex flex-col gap-1">
+                        <span className="text-[#0ff] text-[10px] tracking-[0.5em] uppercase opacity-50">Link ID: NV-9900</span>
+                        <h3 className="text-4xl font-black italic tracking-tighter text-white neon-text">COMMAND GRID</h3>
+                    </div>
+                    
+                    {hasStarted && (
+                        <button 
+                            onClick={togglePause}
+                            className={`p-3 border-2 transition-all duration-300 rounded-lg group ${isPaused ? 'border-[#f05] shadow-[0_0_15px_#f05]' : 'border-[#0ff]/40 hover:border-[#0ff] hover:shadow-[0_0_15px_#0ff]'}`}
+                            title={isPaused ? "Resume (Esc)" : "Pause (Esc)"}
+                        >
+                            {isPaused ? (
+                                <svg className="w-6 h-6 fill-[#f05]" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                            ) : (
+                                <svg className="w-6 h-6 fill-[#0ff] group-hover:animate-pulse" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                            )}
+                        </button>
+                    )}
                 </div>
 
                 {/* STATUS CARDS */}
@@ -169,7 +246,7 @@ const App: React.FC = () => {
                     <div className="p-4 border border-[#0ff]/20 bg-[#0ff]/5 rounded-2xl">
                         <p className="text-[10px] text-[#0ff] uppercase tracking-[0.3em] leading-relaxed opacity-70 text-center font-bold">
                             CALIBRATION: RELATIVE DELTA MODE<br/>
-                            <span className="text-[9px] opacity-40 font-normal mt-1 block tracking-[0.1em]">Move hand to translate • Close fist to fire</span>
+                            <span className="text-[9px] opacity-40 font-normal mt-1 block tracking-[0.1em]">Move hand to translate • Close fist to fire • Keys: Esc, ↑, ↓</span>
                         </p>
                     </div>
                 </div>
