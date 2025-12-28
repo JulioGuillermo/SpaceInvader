@@ -1,0 +1,7 @@
+{
+  "name": "NeonVader: Hand-Protocol",
+  "description": "A retro-neon Space Invaders clone controlled entirely by your hand via webcam. Move your hand to guide the ship and make a fist to fire!",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
